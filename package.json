@@ -1,0 +1,23 @@
+{
+  "name": "fetch-profit-and-loss-from-xero",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "BPRO Admin Muhammad Qasir Rafiq",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^140.0.1",
+    "mongoose": "^8.5.1",
+    "node-cron": "^3.0.3",
+    "xero-node": "^9.0.0"
+  }
+}

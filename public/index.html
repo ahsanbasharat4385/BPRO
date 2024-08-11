@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="./images/bprologo.jfif" />
+    <title>BPRO Xero Integration</title>
+    <style>
+      body {
+        background-color: rgb(98, 152, 165);
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      .main {
+        flex-basis: 460px;
+        height: 280px;
+        background-color: white;
+        box-shadow: 0px 0px 10px 2px #f4b400;
+      }
+      .main h4 {
+        margin-left: 35px;
+      }
+      .main h3 {
+        font-size: 1.4rem;
+        /* margin-left: 35px; */
+        text-align: center;
+      }
+      .main p {
+        margin-left: 19px;
+      }
+      #authentication {
+        margin-top: 10px;
+        margin-left: 160px;
+        font-size: 1rem;
+        font-weight: 700;
+        padding: 0.2rem 0.5rem;
+        color: black;
+        border: 2px solid blue;
+        border-radius: 5px;
+        transition: all 0.5s;
+      }
+      #authentication:hover {
+        transform: translateY(-7px);
+        background-color: blue;
+        color: black;
+      }
+      .copyright {
+        margin-top: 30px;
+        margin-right: 5px;
+        /* font-size: 0.8rem; */
+      }
+    </style>
+  </head>
+  <body>
+    <div class="main">
+      <h4>Welcome to BookKeeping Pro (SMC-PVT) Limited</h4>
+      <h3>BPRO Xero API</h3>
+      <p>
+        Please click the 'Authentication' button to proceed to Xero
+        authentication.
+      </p>
+      <button id="authentication">Authentication</button>
+      <p class="copyright">
+        Copyright © 2024 Bookkeeping Pro | Reserved by Bookkeeping Pro (SMC-PVT) Limited
+      </p>
+    </div>
+    <script>
+      document
+        .getElementById("authentication")
+        .addEventListener("click", () => {
+          window.location.href = "/auth";
+        });
+    </script>
+  </body>
+</html>
