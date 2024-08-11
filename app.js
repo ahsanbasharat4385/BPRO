@@ -26,11 +26,14 @@ const tokenSchema = new mongoose.Schema({
 
 const Token = mongoose.model("Token", tokenSchema);
 
+let APP_URL = process.env.APP_URL || false";
+console.log({ APP_URL });
+
 // Xero Authentication credentials
 const xero = new XeroClient({
   clientId: process.env.XERO_CLIENT_ID,
   clientSecret: process.env.XERO_CLIENT_SECRET,
-  redirectUris: [ ( process.env.APP_URL || process.env.XERO_REDIRECT_URI )],
+  redirectUris: [APP_URL || process.env.XERO_REDIRECT_URI],
   scopes: process.env.XERO_SCOPE.split(" "),
   httpTimeout: 10000,
 });
@@ -128,10 +131,13 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-
 // Helper Function to Format Date
 const formatDate = (date) => {
-  return new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(date).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 };
 
 const getMonthsRange = () => {
@@ -146,13 +152,13 @@ const getMonthsRange = () => {
     const start = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),
-      2
+      2,
     );
     // calculate the end of the current month(Start of the next month)
     const end = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth() + 1,
-      1
+      1,
     );
     // Push the Start and end dates to ISO Strings into dates array
     dates.push({
@@ -166,7 +172,6 @@ const getMonthsRange = () => {
   return dates.reverse();
 };
 
-
 const fetchAndUpdateInvoices = async () => {
   try {
     // Refresh token if expired
@@ -178,7 +183,7 @@ const fetchAndUpdateInvoices = async () => {
 
     try {
       const result = await xero.accountingApi.getInvoices(
-        xero.tenants[0].tenantId
+        xero.tenants[0].tenantId,
       );
       const invoices = result.body.invoices;
 
@@ -186,7 +191,7 @@ const fetchAndUpdateInvoices = async () => {
       const accrecInvoices = invoices.filter(
         (invoice) =>
           invoice.type === "ACCREC" &&
-          (invoice.status === "AUTHORISED" || invoice.status === "PAID")
+          (invoice.status === "AUTHORISED" || invoice.status === "PAID"),
       );
 
       // Sort invoices by date in descending order
@@ -282,7 +287,7 @@ const fetchAndUpdateInvoices = async () => {
       });
 
       console.log(
-        "All available Balance Sheet reports have been fetched and stored in Google Sheets."
+        "All available Balance Sheet reports have been fetched and stored in Google Sheets.",
       );
     } catch (error) {
       if (error.code === "ETIMEDOUT") {
@@ -298,10 +303,437 @@ const fetchAndUpdateInvoices = async () => {
   }
 };
 
+const fetchAndUpdateProfitAndLoss = async () => {
+  try {
+    // Refresh token if expired
+    if (xero.readTokenSet().expires_at < Date.now()) {
+      const tokenSet = await xero.refreshToken();
+      await saveTokenSet(tokenSet);
+      console.log("Token has been refreshed....");
+    }
+
+    const dates = getMonthsRange(); // Fetch all months from January 2023 to current month
+    const formattedRows = [];
+    const processedMonths = new Set(); // To keep track of processed months
+    let zeroProfitMonthsCount = 0; // Counter for consecutive months with zero profits
+    let stopProcessing = false; // Flag to stop processing further months if they find 3 consecutive months of P&L is Zero
+
+    for (const { start, end } of dates) {
+      if (stopProcessing) {
+        console.log(
+          "Terminating further processing. Ten consecutive months with zero profits detected.",
+        );
+        break;
+      }
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 4000)); // Introduce a delay of 5 seconds (20000 milliseconds)
+        const report = await xero.accountingApi.getReportProfitAndLoss(
+          xero.tenants[0].tenantId,
+          start,
+          end,
+        );
+        const reports = report.body.reports;
+
+        if (!reports) {
+          throw new Error("Reports not found in the profit and loss report.");
+        }
+
+        let includeMonth = false;
+
+        reports.forEach((report) => {
+          let currentMonth = "";
+          report.rows.forEach((row) => {
+            if (row.rowType === "Header" && row.cells.length > 1) {
+              currentMonth = row.cells[1].value;
+            }
+
+            if (row.rowType === "Section" && row.title === "") {
+              let hasGrossProfit = false;
+              let hasNetProfit = false;
+
+              if (row.rows && row.rows.length > 0) {
+                row.rows.forEach((subRow) => {
+                  if (
+                    subRow.rowType === "Row" &&
+                    subRow.cells &&
+                    subRow.cells.length > 0
+                  ) {
+                    const cellValue = subRow.cells[0].value;
+                    const value = subRow.cells[1].value
+                      ? parseFloat(subRow.cells[1].value)
+                      : NaN;
+
+                    if (cellValue === "Gross Profit" && value !== 0.0) {
+                      hasGrossProfit = true;
+                    }
+                    if (cellValue === "Net Profit" && value !== 0.0) {
+                      hasNetProfit = true;
+                    }
+                  }
+                });
+              }
+
+              if (hasGrossProfit || hasNetProfit) {
+                includeMonth = true;
+                zeroProfitMonthsCount = 0; // Reset the counter if profits are non-zero
+                if (currentMonth && !processedMonths.has(currentMonth)) {
+                  processedMonths.add(currentMonth);
+                  report.rows.forEach((row) => {
+                    if (row.rowType === "Section") {
+                      if (row.title) {
+                        formattedRows.push([currentMonth, row.title]);
+                      }
+                      row.rows.forEach((subRow) => {
+                        if (
+                          subRow.rowType === "Row" ||
+                          subRow.rowType === "SummaryRow"
+                        ) {
+                          formattedRows.push([
+                            currentMonth,
+                            ...subRow.cells.map((cell) => cell.value || ""),
+                          ]);
+                        }
+                      });
+                    }
+                  });
+                  console.log(
+                    `Adding month ${start} to ${end} as both profits are non-zero.`,
+                  );
+                }
+              }
+            }
+          });
+        });
+
+        if (!includeMonth) {
+          zeroProfitMonthsCount++;
+          console.log(
+            `Skipping month ${start} to ${end} as both profits are zero.`,
+          );
+        }
+
+        // Add two empty rows after each month's data
+        formattedRows.push([], []); // Two empty rows
+
+        // Check if ten consecutive months have zero profits
+        if (zeroProfitMonthsCount === 10) {
+          stopProcessing = true;
+        }
+      } catch (error) {
+        console.error(`Error fetching report for ${start} to ${end}:`, error);
+      }
+    }
+    // Update Google Sheets
+    const sheetId = 137930456; // Update with your sheet ID
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      resource: {
+        requests: [
+          {
+            updateCells: {
+              range: {
+                sheetId,
+                // Used for clearing Sheet Column Range and Row Range
+                // startRowIndex: 0, // Start from Row 1 (index 0)
+                // endRowIndex: 5, // End on Row 6 (index 5)
+                // startColumnIndex: 0, // Starting from Column A
+                // endColumnIndex: 5, // End on Column D
+              },
+              fields: "userEnteredValue",
+            },
+          },
+        ],
+      },
+    });
+
+    const headerValues = ["Date", "Head Name", "Amount"]; // Headers of Google Sheet
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: "KYB P&L!A1",
+      valueInputOption: "RAW",
+      resource: {
+        values: [headerValues, ...formattedRows],
+      },
+    });
+
+    // Styling the Header of google sheet
+    const requests = [
+      {
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: 0,
+            endRowIndex: 1,
+            startColumnIndex: 0,
+            endColumnIndex: headerValues.length,
+          },
+          cell: {
+            userEnteredFormat: {
+              textFormat: {
+                bold: true,
+              },
+            },
+          },
+          fields: "userEnteredFormat.textFormat.bold",
+        },
+      },
+    ];
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      resource: {
+        requests,
+      },
+    });
+    console.log(formattedRows);
+    console.log(
+      "All available profit and loss reports have been fetched and stored in Google Sheets.",
+    );
+  } catch (error) {
+    console.error("Error fetching profit and loss reports:", error);
+  }
+};
+
+const fetchAndUpdateBalanceSheet = async () => {
+  try {
+    // Refresh token if expired
+    if (xero.readTokenSet().expires_at < Date.now()) {
+      const tokenSet = await xero.refreshToken();
+      await saveTokenSet(tokenSet);
+      console.log("Token has been refreshed....");
+    }
+
+    const dates = getMonthsRange(); // Fetch all months from January 2023 to current month
+    const processedMonths = new Set(); // To keep track of processed Month
+    let zeroNetAssetsCount = 0; // Counter for consecutive months with zero Net Assets
+    let stopProcessing = false; // Flag to stop processing further if 20 consecutive months with zero Net Assets
+
+    const uniqueKeys = new Set(); // To store all unique cell0 values
+    const sectionDataMap = new Map(); // Map to store details and their values for each month
+
+    // Initialize the sectionDataMap with empty values for each section
+    dates.forEach(({ start, end }) => {
+      sectionDataMap.set(start, {}); // Initialize an empty object for each month
+    });
+
+    // Fetch and process reports
+    for (const { start, end } of dates) {
+      if (stopProcessing) {
+        console.log(
+          "Terminating further processing. Twenty consecutive months with zero Net Assets detected.",
+        );
+        break;
+      }
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2000)); // Delay of 2 seconds between each month
+        const report = await xero.accountingApi.getReportBalanceSheet(
+          xero.tenants[0].tenantId,
+          start,
+          end,
+        );
+        const reports = report.body.reports;
+
+        if (!reports) {
+          throw new Error("Reports not found in the Balance Sheet");
+        }
+
+        const monthLabel = `${start} to ${end}`;
+
+        let includeMonth = false;
+
+        reports.forEach((report) => {
+          let currentMonth = "";
+          report.rows.forEach((row) => {
+            if (row.rowType === "Header" && row.cells.length > 1) {
+              currentMonth = row.cells[1].value;
+            }
+            if (row.rowType === "Section" && row.title === "") {
+              let hasNetAssets = false;
+              if (row.rows && row.rows.length > 0) {
+                row.rows.forEach((subRow) => {
+                  if (
+                    subRow.rowType === "Row" &&
+                    subRow.cells &&
+                    subRow.cells.length > 0
+                  ) {
+                    const cellValue = subRow.cells[0].value;
+                    const value = subRow.cells[1].value
+                      ? parseFloat(subRow.cells[1].value)
+                      : NaN;
+                    if (cellValue === "Net Assets" && value !== 0.0) {
+                      hasNetAssets = true;
+                    }
+                  }
+                });
+              }
+
+              if (hasNetAssets) {
+                includeMonth = true;
+                zeroNetAssetsCount = 0; // Reset the counter if Net Assets is non-zero
+                if (currentMonth && !processedMonths.has(currentMonth)) {
+                  processedMonths.add(currentMonth);
+                  report.rows.forEach((row) => {
+                    if (row.rowType === "Section") {
+                      if (row.title) {
+                        // Add section title to unique keys
+                        uniqueKeys.add(row.title);
+                      }
+                      row.rows.forEach((subRow) => {
+                        if (
+                          subRow.rowType === "Row" ||
+                          subRow.rowType === "SummaryRow"
+                        ) {
+                          const cell0Value = subRow.cells[0]?.value || "";
+                          const cell1Value = subRow.cells[1]?.value || "";
+
+                          uniqueKeys.add(cell0Value); // Add cell0 to unique keys
+
+                          // Store cell1 values in the sectionDataMap
+                          if (!sectionDataMap.get(start)[cell0Value]) {
+                            sectionDataMap.get(start)[cell0Value] = {};
+                          }
+                          sectionDataMap.get(start)[cell0Value][monthLabel] =
+                            cell1Value;
+                        }
+                      });
+                    }
+                  });
+                  console.log(
+                    `Adding Month ${start} to ${end} as its Net Assets are non-zero.`,
+                  );
+                }
+              }
+            }
+          });
+        });
+        if (!includeMonth) {
+          zeroNetAssetsCount++;
+          console.log(
+            `Skipping month ${start} to ${end} as its Net Assets are zero.`,
+          );
+        }
+        // Check if 10 consecutive months have zero Net Assets
+        if (zeroNetAssetsCount === 10) {
+          stopProcessing = true;
+        }
+      } catch (error) {
+        console.error(`Error processing dates from ${start} to ${end}:`, error);
+      }
+    }
+
+    // Prepare data for Google Sheets
+    const headerValues = [
+      "Heads",
+      ...dates
+        .filter(
+          ({ start }) =>
+            sectionDataMap.get(start) &&
+            Object.keys(sectionDataMap.get(start)).length,
+        )
+        .map((date) => `${date.end}`),
+    ];
+    const formattedRows = [];
+
+    uniqueKeys.forEach((key) => {
+      const row = [key];
+      dates
+        .filter(
+          ({ start }) =>
+            sectionDataMap.get(start) &&
+            Object.keys(sectionDataMap.get(start)).length,
+        )
+        .forEach(({ start, end }) => {
+          const monthData = sectionDataMap.get(start);
+          row.push(
+            monthData && monthData[key]
+              ? monthData[key][`${start} to ${end}`] || ""
+              : "",
+          );
+        });
+      formattedRows.push(row);
+    });
+
+    // Clear the previous content
+    const sheetId = 206785303; // Update with your sheet ID
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      resource: {
+        requests: [
+          {
+            updateCells: {
+              range: {
+                sheetId,
+                startRowIndex: 0, // Clear from Row 1 (index 0)
+                endRowIndex: 1000, // End on Row 1000 (or a large enough value)
+                startColumnIndex: 0, // Starting from Column A
+                endColumnIndex: headerValues.length, // Dynamically set the end column index
+              },
+              fields: "userEnteredValue",
+            },
+          },
+        ],
+      },
+    });
+
+    // Update the sheet with new data
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: "KYB BS!A1",
+      valueInputOption: "RAW",
+      resource: {
+        values: [headerValues, ...formattedRows],
+      },
+    });
+
+    // Styling the Header of Google Sheet
+    const requests = [
+      {
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: 0,
+            endRowIndex: 1,
+            startColumnIndex: 0,
+            endColumnIndex: headerValues.length,
+          },
+          cell: {
+            userEnteredFormat: {
+              textFormat: {
+                bold: true,
+              },
+            },
+          },
+          fields: "userEnteredFormat.textFormat.bold",
+        },
+      },
+    ];
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      resource: {
+        requests,
+      },
+    });
+
+    console.log(formattedRows);
+    console.log(
+      "All available Balance Sheet reports have been fetched and stored in Google Sheets.",
+    );
+  } catch (error) {
+    console.error("Error fetching Balance Sheet reports:", error);
+  }
+};
+
 //EndPoint showing after successfully fetching BalanceSheet from Xero
 app.get("/BalanceSheet", async (req, res) => {
   try {
     await fetchAndUpdateInvoices();
+    await fetchAndUpdateProfitAndLoss();
+    await fetchAndUpdateBalanceSheet();
     const htmlContent = `
      <!DOCTYPE html>
 <html lang="en">
