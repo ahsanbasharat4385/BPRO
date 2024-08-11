@@ -30,7 +30,7 @@ const Token = mongoose.model("Token", tokenSchema);
 const xero = new XeroClient({
   clientId: process.env.XERO_CLIENT_ID,
   clientSecret: process.env.XERO_CLIENT_SECRET,
-  redirectUris: [process.env.XERO_REDIRECT_URI],
+  redirectUris: [ ( process.env.APP_URL || process.env.XERO_REDIRECT_URI )],
   scopes: process.env.XERO_SCOPE.split(" "),
   httpTimeout: 10000,
 });
